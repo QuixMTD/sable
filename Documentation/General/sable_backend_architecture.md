@@ -221,6 +221,32 @@ ws.send(JSON.stringify({ type: 'sandbox_output', ...result }))
 
 ---
 
+## Command Execution Model
+
+> **Status**: not yet built. This section describes the agreed shape so the schema and runtime can be implemented against a single picture.
+
+Commands are the unit of executable work in Sable. There are four kinds, all logged to one place when they run.
+
+| Kind | Source | Where it runs |
+|---|---|---|
+| `preconfigured` | platform-defined: `/montecarlo`, `/backtest`, `/risk`, `/factor`, `/blacklitterman`, `/property:value`, etc. — gated per-user by `active_modules` | gateway routes to the implementing service (sable-quant for analysis, sable-sc / sable-re / sable-crypto / sable-alt for module-specific data) |
+| `pipeline` (graph) | user-built visual flowchart, stored in `core.pipelines` | sable-core walks the graph in topological order, calling each block's downstream service |
+| `pipeline` (script) | user-written Python from the editor, stored in `core.pipelines` (`kind='script'`) | sable-sandbox subprocess |
+| `ai_prompt` | user prose — Tier 1 chatbot turn or Tier 2 Vertex AI natural-language command | sable-core builds context, calls Claude / Vertex AI; the AI may resolve to one or more downstream command invocations as tool calls (each logged as a child of the prompt) |
+
+**Where execution lives**: sable-core. Commands run in core's runtime but consume data from the module schemas (`sc.*`, `re.*`, `crypto.*`, `alt.*`) and identity from `gateway.*`. This is why the platform is one Postgres instance with schema-per-service — cross-schema reads from core are routine, cross-DB reads would not be.
+
+**Run log**: every invocation, regardless of kind, writes a row to `core.command_history`. AI tool calls and pipeline-block sub-invocations link back to their parent via `parent_command_id` so the full invocation tree is reconstructible.
+
+**Triggers**: `manual` (Cmd+K, chat send) · `scheduled` (Cloud Scheduler → `/pipelines/:id/run`) · `event` (Pub/Sub subscription, e.g. `portfolio.updated`).
+
+**Schema deltas to apply when this is built** (deferred):
+- `core.pipelines` absorbs the standalone `workspace_scripts` table via `kind text CHECK (kind IN ('graph','script'))`, with mutually-exclusive `graph jsonb` / `code text` and a CHECK that exactly one is populated. `pipeline_versions` mirrors.
+- `core.command_history` becomes the unified run log: `command_kind ('preconfigured'|'pipeline'|'ai_prompt')`, `command_name` (preconfigured), `pipeline_id` (saved), `prompt_text` / `ai_model` / `ai_tier` (AI), `parent_command_id`, `trigger_source ('manual'|'cron'|'event'|'chat'|'nl_command'|'pipeline_block')`, `output jsonb`.
+- Chatbot multi-turn conversation persistence is a separate decision (currently documented as session-only).
+
+---
+
 ## Command Target Resolution
 
 Commands can be run on any target. The `@` prefix references user-owned data. Plain text references market tickers.
