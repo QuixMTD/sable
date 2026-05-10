@@ -1,0 +1,11 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+
+# Libraries available to user code in the sandbox subprocess
+numpy==2.2.0
+pandas==2.2.3
+scipy==1.14.1
+matplotlib==3.10.0
+statsmodels==0.14.4
+scikit-learn==1.6.0

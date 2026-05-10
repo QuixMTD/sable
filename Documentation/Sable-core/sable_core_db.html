@@ -1,0 +1,191 @@
+
+<style>
+#erd { width: 100%; overflow-x: auto; }
+#erd svg { min-width: 900px; }
+.erd-label { font-size: 13px; color: var(--color-text-secondary); margin: 0 0 12px; }
+</style>
+<p class="erd-label">sable-core database — tables and relationships</p>
+<div id="erd"></div>
+<script type="module">
+import mermaid from 'https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs';
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+await document.fonts.ready;
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  fontFamily: '"Anthropic Sans", sans-serif',
+  themeVariables: {
+    darkMode: dark,
+    fontSize: '13px',
+    fontFamily: '"Anthropic Sans", sans-serif',
+    lineColor: dark ? '#9c9a92' : '#73726c',
+    textColor: dark ? '#c2c0b6' : '#3d3d3a',
+    primaryColor: dark ? '#26215C' : '#EEEDFE',
+    primaryTextColor: dark ? '#CECBF6' : '#3C3489',
+    primaryBorderColor: dark ? '#534AB7' : '#AFA9EC',
+    secondaryColor: dark ? '#04342C' : '#E1F5EE',
+    tertiaryColor: dark ? '#042C53' : '#E6F1FB',
+  },
+});
+const diagram = `erDiagram
+  ORGANISATIONS {
+    uuid id PK
+    string name
+    string logo_url
+    bool chatbot_enabled
+  }
+  USERS {
+    uuid id PK
+    uuid org_id FK
+    string clerk_id
+    string email
+    string role
+    array active_modules
+    jsonb settings
+  }
+  ORG_ROLES {
+    uuid id PK
+    uuid org_id FK
+    string role_name
+    jsonb permissions
+  }
+  CLIENTS {
+    uuid id PK
+    uuid org_id FK
+    string name
+    string reference
+  }
+  PORTFOLIOS {
+    uuid id PK
+    uuid client_id FK
+    string name
+    string type
+    string currency
+  }
+  BROKER_MAPPINGS {
+    uuid id PK
+    uuid org_id FK
+    string broker_name
+    array detect_columns
+    jsonb column_map
+  }
+  WORKSPACE_PAGES {
+    uuid id PK
+    uuid user_id FK
+    string name
+    string icon
+    int position
+    string layout_mode
+  }
+  WORKSPACE_WIDGETS {
+    uuid id PK
+    uuid page_id FK
+    string widget_type
+    jsonb config
+    float x
+    float y
+    float width
+    float height
+  }
+  WORKSPACE_NOTES {
+    uuid id PK
+    uuid page_id FK
+    uuid user_id FK
+    jsonb content
+    string linked_asset_id
+    array tags
+  }
+  WORKSPACE_SCRIPTS {
+    uuid id PK
+    uuid user_id FK
+    string name
+    text code
+    string default_target
+  }
+  PIPELINES {
+    uuid id PK
+    uuid user_id FK
+    string name
+    jsonb graph
+    string trigger_type
+    jsonb trigger_config
+    bool is_shared
+  }
+  PIPELINE_SHARES {
+    uuid id PK
+    uuid pipeline_id FK
+    uuid shared_with_org_id FK
+    string permission
+  }
+  COMMAND_HISTORY {
+    uuid id PK
+    uuid user_id FK
+    string command
+    string target
+    timestamp executed_at
+  }
+  ALERTS {
+    uuid id PK
+    uuid user_id FK
+    string alert_type
+    jsonb condition
+    array delivery
+    bool is_active
+  }
+  SHARE_TOKENS {
+    uuid id PK
+    uuid page_id FK
+    string token
+    timestamp expires_at
+    bool is_read_only
+  }
+  CERTIFICATION_USAGE {
+    uuid id PK
+    uuid user_id FK
+    float session_hours
+    int commands_run
+    string certification_level
+    timestamp eligible_at
+  }
+
+  ORGANISATIONS ||--o{ USERS : "has"
+  ORGANISATIONS ||--o{ CLIENTS : "owns"
+  ORGANISATIONS ||--o{ ORG_ROLES : "defines"
+  ORGANISATIONS ||--o{ BROKER_MAPPINGS : "saves"
+  CLIENTS ||--o{ PORTFOLIOS : "holds"
+  USERS ||--o{ WORKSPACE_PAGES : "creates"
+  USERS ||--o{ WORKSPACE_SCRIPTS : "writes"
+  USERS ||--o{ PIPELINES : "builds"
+  USERS ||--o{ COMMAND_HISTORY : "logs"
+  USERS ||--o{ ALERTS : "sets"
+  USERS ||--o| CERTIFICATION_USAGE : "tracks"
+  WORKSPACE_PAGES ||--o{ WORKSPACE_WIDGETS : "contains"
+  WORKSPACE_PAGES ||--o{ WORKSPACE_NOTES : "contains"
+  WORKSPACE_PAGES ||--o{ SHARE_TOKENS : "generates"
+  PIPELINES ||--o{ PIPELINE_SHARES : "shared via"
+`;
+const { svg } = await mermaid.render('erd-svg', diagram);
+document.getElementById('erd').innerHTML = svg;
+document.querySelectorAll('#erd svg.erDiagram .node').forEach(node => {
+  const firstPath = node.querySelector('path[d]');
+  if (!firstPath) return;
+  const d = firstPath.getAttribute('d');
+  const nums = d.match(/-?[\d.]+/g)?.map(Number);
+  if (!nums || nums.length < 8) return;
+  const xs = [nums[0], nums[2], nums[4], nums[6]];
+  const ys = [nums[1], nums[3], nums[5], nums[7]];
+  const x = Math.min(...xs), y = Math.min(...ys);
+  const w = Math.max(...xs) - x, h = Math.max(...ys) - y;
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('x', x); rect.setAttribute('y', y);
+  rect.setAttribute('width', w); rect.setAttribute('height', h);
+  rect.setAttribute('rx', '8');
+  for (const a of ['fill', 'stroke', 'stroke-width', 'class', 'style']) {
+    if (firstPath.hasAttribute(a)) rect.setAttribute(a, firstPath.getAttribute(a));
+  }
+  firstPath.replaceWith(rect);
+});
+document.querySelectorAll('#erd svg.erDiagram .row-rect-odd path, #erd svg.erDiagram .row-rect-even path').forEach(p => {
+  p.setAttribute('stroke', 'none');
+});
+</script>
