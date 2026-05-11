@@ -265,6 +265,69 @@ The gateway resolves the target before passing data to the quant engine or sandb
 
 ---
 
+## User Models — Three Personas
+
+Sable supports three user shapes. The schema must work for all three; module-level holdings tables inherit this through `portfolios`.
+
+| Persona | `gateway.users.org_id` | Has clients? | Workspace context |
+|---|---|---|---|
+| **Org-firm user** | set | Yes — org-owned CRM clients | Pages can be personal, org-shared, or client-dashboard. Roles within the firm (owner/admin/analyst/trader/viewer). |
+| **Independent advisor** | NULL | Yes — user-owned CRM clients | Same workspace surface as org users, but everything is personally owned. No org-shared layouts or templates unless they ever join a firm. |
+| **Individual investor** | NULL | No | Personal pages tracking their own portfolios. No CRM. |
+
+### Ownership pattern: `(org_id, user_id)` xor
+
+Every core table whose rows can be owned by either a firm or an individual user follows the same shape:
+
+```sql
+org_id  uuid REFERENCES gateway.organisations(id) ON DELETE RESTRICT,
+user_id uuid REFERENCES gateway.users(id) ON DELETE RESTRICT,
+CHECK ((org_id IS NOT NULL) <> (user_id IS NOT NULL))   -- exactly one route
+```
+
+Tables using this pattern in `core`:
+- `clients`
+- `portfolios` *(three-way: also allows `client_id IS NULL` for the self-investor case)*
+- `report_templates`
+- `client_reports`
+
+RLS for each follows the same three-policy template: a single combined `select` policy, plus separate `write_org` and `write_user` policies that gate on the populated branch.
+
+### Deferred / known gaps
+
+- **Parent-child `org_id` consistency** (e.g. `portfolios.org_id` must match `clients.org_id` for the same `client_id`) is not enforced by the DB. Composite foreign keys are awkward when nullable, and triggers add complexity. App-layer enforcement for now; revisit with a trigger if drift becomes a real problem.
+- **`workspace_layouts`** is currently org-only. Independent advisors who want personal saved layouts use `workspace_pages` directly today. Extend with the same `(org_id, user_id)` xor when there's product demand.
+- **Personal reports for individual investors** (e.g. tax summaries, HMRC reports) — `client_reports` requires `client_id NOT NULL`, so individual investors with no CRM clients have no path. Add a `personal_reports` table when the feature lands; don't generalise `client_reports` because its permissions / wire shape are CRM-centric.
+
+### Module-level schemas (sc, re, crypto, alt)
+
+When these are built, their holdings tables reference `core.portfolios(id)` directly. The portfolio row already encodes the access route (org / advisor / self), so module-level RLS can be a thin pass-through:
+
+```sql
+-- e.g. in sc.holdings
+CREATE POLICY sc_holdings_select ON sc.holdings FOR SELECT
+  USING (EXISTS (
+    SELECT 1 FROM core.portfolios p
+    WHERE p.id = portfolio_id
+      AND (
+        (p.org_id IS NOT NULL AND p.org_id = app_org_id())
+        OR p.user_id = app_user_id()
+      )
+  ) OR app_is_admin());
+```
+
+This keeps the persona logic in one place (`core.portfolios`) and out of every module schema.
+
+### Module gating — not in the schema
+
+There is no schema-level CHECK that gates writes by `active_modules`. The gateway enforces module entitlement at request time (`MODULE_NOT_ACTIVE` error code). Reasons:
+
+- Downgrades must not break access to existing data
+- Trials and admin overrides need to bypass entitlement
+- The only `active_modules`-aware DB construct is the trigger preventing non-`webhook`/`system` actors from *writing* the array (so an org admin can't self-grant modules)
+
+---
+
 ## Data Sources by Module
 
 | Module | Source | Cost |
