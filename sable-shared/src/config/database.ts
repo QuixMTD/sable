@@ -13,6 +13,11 @@ import postgres, { type Sql } from 'postgres';
 import type { ActorType } from '../constants/actors.js';
 import type { UserRole } from '../constants/roles.js';
 
+// Re-export postgres.js's main types so services don't need a separate
+// `postgres` dependency just for typing.
+export type { Sql };
+export type TransactionSql = postgres.TransactionSql;
+
 // ---------------------------------------------------------------------------
 // Pool config
 // ---------------------------------------------------------------------------
