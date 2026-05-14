@@ -29,6 +29,7 @@ import * as usersDb from '../db/users.js';
 import * as securityEventsDb from '../db/securityEvents.js';
 import * as email from './email.js';
 import * as security from './security.js';
+import * as universities from './universities.js';
 import * as sessions from './sessions.js';
 
 const VERIFY_TOKEN_TTL_HOURS = 24;
@@ -94,6 +95,11 @@ export async function signup(sql: Sql, _redis: RedisClient, input: SignupInput):
         referralCode: randomBytes(REFERRAL_CODE_BYTES).toString('base64url'),
       });
       await evTokensDb.create(tx, user.id, verifyTokenHash, verifyExpiresAt);
+
+      // Free student/staff licence for partner-university email domains.
+      // No-op when the domain isn't on the partner list.
+      await universities.applyOnSignup(tx, user.id, input.email);
+
       return { userId: user.id };
     },
   );

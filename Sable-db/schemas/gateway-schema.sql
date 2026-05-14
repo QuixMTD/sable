@@ -628,6 +628,232 @@ CREATE POLICY certification_usage_insert ON certification_usage FOR INSERT
   WITH CHECK (app_actor() = 'system');
 
 ------------------------------------------------------------------------------
+-- 16a. Sable Institute of Quantitative Finance — universities, licenses,
+--      minute-bucketed usage log, exam bank, exam attempts, certificates,
+--      and the append-only signed ledger.
+------------------------------------------------------------------------------
+
+-- Partner universities — every student license maps to one of these.
+CREATE TABLE universities (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name          text NOT NULL,
+  country       text NOT NULL,
+  email_domain  text NOT NULL UNIQUE,   -- e.g. 'mit.edu' — used for self-serve enrolment
+  is_active     boolean NOT NULL DEFAULT true,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE universities ENABLE ROW LEVEL SECURITY;
+CREATE POLICY universities_select ON universities FOR SELECT USING (true); -- public list
+CREATE POLICY universities_write ON universities FOR ALL USING (app_is_admin())
+  WITH CHECK (app_is_admin());
+
+-- License type on users — drives the free-tier flag and access to the
+-- university programme. account_type stays as the auth-tree marker.
+ALTER TABLE users ADD COLUMN license_type text NOT NULL DEFAULT 'individual'
+  CHECK (license_type IN ('individual', 'staff', 'student', 'university_admin'));
+ALTER TABLE users ADD COLUMN university_id uuid REFERENCES universities(id) ON DELETE SET NULL;
+CREATE INDEX users_university_id_idx ON users (university_id) WHERE university_id IS NOT NULL;
+
+-- Per-license verification trail — separate from users so a single user
+-- can move between universities over their career.
+CREATE TABLE university_licenses (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  university_id   uuid NOT NULL REFERENCES universities(id) ON DELETE RESTRICT,
+  role            text NOT NULL CHECK (role IN ('student', 'staff', 'university_admin')),
+  verified_at     timestamptz,
+  expires_at      timestamptz,
+  revoked_at      timestamptz,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, university_id, role)
+);
+
+CREATE INDEX university_licenses_user_idx ON university_licenses (user_id);
+CREATE INDEX university_licenses_active_idx ON university_licenses (university_id)
+  WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now());
+
+ALTER TABLE university_licenses ENABLE ROW LEVEL SECURITY;
+CREATE POLICY university_licenses_select ON university_licenses FOR SELECT
+  USING (user_id = app_user_id() OR app_is_admin());
+CREATE POLICY university_licenses_write ON university_licenses FOR ALL
+  USING (app_actor() = 'gateway' OR app_is_admin())
+  WITH CHECK (app_actor() = 'gateway' OR app_is_admin());
+
+-- Append-only minute-bucketed usage log. Each module publishes a row per
+-- active minute via Pub/Sub. UNIQUE (user_id, module, minute_bucket)
+-- keeps retries idempotent.
+CREATE TABLE certification_minutes (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  module         text NOT NULL CHECK (module IN ('sc', 're', 'crypto', 'alt', 'tax', 'core')),
+  minute_bucket  timestamptz NOT NULL,
+  source_service text NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, module, minute_bucket)
+);
+
+CREATE INDEX certification_minutes_user_idx ON certification_minutes (user_id);
+CREATE INDEX certification_minutes_bucket_idx ON certification_minutes (minute_bucket);
+
+ALTER TABLE certification_minutes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY certification_minutes_select ON certification_minutes FOR SELECT
+  USING (user_id = app_user_id() OR app_is_admin());
+CREATE POLICY certification_minutes_insert ON certification_minutes FOR INSERT
+  WITH CHECK (app_actor() IN ('gateway', 'system'));
+
+-- Static config — the three Institute levels. Seeded inline via
+-- migration; admins can adjust fees / thresholds with an audit-logged
+-- write.
+CREATE TABLE certification_levels (
+  code              text PRIMARY KEY CHECK (code IN ('foundation', 'professional', 'advanced')),
+  display_name      text NOT NULL,
+  min_hours         integer NOT NULL CHECK (min_hours > 0),
+  exam_fee_usd      integer NOT NULL CHECK (exam_fee_usd >= 0),
+  format            text NOT NULL CHECK (format IN ('mcq', 'practical', 'case_study')),
+  pass_threshold    integer NOT NULL CHECK (pass_threshold BETWEEN 1 AND 100),
+  question_count    integer,           -- nullable for non-MCQ formats
+  duration_minutes  integer NOT NULL,
+  is_active         boolean NOT NULL DEFAULT true,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO certification_levels (code, display_name, min_hours, exam_fee_usd, format, pass_threshold, question_count, duration_minutes) VALUES
+  ('foundation',   'Foundation — Certified Analyst',           50,  150, 'mcq',        70, 60, 90),
+  ('professional', 'Professional — Certified Quant',           200, 300, 'practical',  70, NULL, 180),
+  ('advanced',     'Advanced — Certified Portfolio Analyst',   500, 500, 'case_study', 70, NULL, 240);
+
+ALTER TABLE certification_levels ENABLE ROW LEVEL SECURITY;
+CREATE POLICY certification_levels_select ON certification_levels FOR SELECT USING (true);
+CREATE POLICY certification_levels_write ON certification_levels FOR ALL USING (app_is_admin())
+  WITH CHECK (app_is_admin());
+
+-- Foundation MCQ question bank. Each question has 4 options; `correct_key`
+-- is one of 'a'/'b'/'c'/'d'. `weight` is for future scoring tweaks.
+CREATE TABLE exam_questions (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  level        text NOT NULL REFERENCES certification_levels(code) ON DELETE RESTRICT,
+  prompt       text NOT NULL,
+  options      jsonb NOT NULL,         -- [{"key":"a","text":"..."}, ...]
+  correct_key  text NOT NULL,
+  weight       integer NOT NULL DEFAULT 1 CHECK (weight > 0),
+  category     text,                   -- e.g. 'commands', 'risk', 'quant'
+  is_active    boolean NOT NULL DEFAULT true,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX exam_questions_level_active_idx ON exam_questions (level) WHERE is_active = true;
+
+ALTER TABLE exam_questions ENABLE ROW LEVEL SECURITY;
+-- Candidates can't read questions directly (would defeat the exam); the
+-- gateway service reads them on behalf of an attempt.
+CREATE POLICY exam_questions_select ON exam_questions FOR SELECT
+  USING (app_actor() = 'gateway' OR app_is_admin());
+CREATE POLICY exam_questions_write ON exam_questions FOR ALL USING (app_is_admin())
+  WITH CHECK (app_is_admin());
+
+-- Exam attempts — one row per try. question_set is the array of selected
+-- question IDs (so re-scoring is deterministic). answers is the
+-- candidate's submission. payment_intent_id is reserved for Stripe.
+CREATE TABLE exam_attempts (
+  id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id              uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  level                text NOT NULL REFERENCES certification_levels(code) ON DELETE RESTRICT,
+  status               text NOT NULL CHECK (status IN ('pending_payment', 'in_progress', 'submitted', 'passed', 'failed', 'expired')),
+  question_set         jsonb NOT NULL DEFAULT '[]'::jsonb,
+  answers              jsonb NOT NULL DEFAULT '{}'::jsonb,
+  score                integer CHECK (score BETWEEN 0 AND 100),
+  hours_at_attempt     double precision NOT NULL,
+  started_at           timestamptz,
+  submitted_at         timestamptz,
+  expires_at           timestamptz,
+  payment_intent_id    text,           -- Stripe reference, reserved
+  created_at           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX exam_attempts_user_idx ON exam_attempts (user_id);
+CREATE INDEX exam_attempts_level_status_idx ON exam_attempts (level, status);
+
+ALTER TABLE exam_attempts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY exam_attempts_select ON exam_attempts FOR SELECT
+  USING (user_id = app_user_id() OR app_is_admin());
+CREATE POLICY exam_attempts_write ON exam_attempts FOR ALL
+  USING (app_actor() = 'gateway' OR app_is_admin())
+  WITH CHECK (app_actor() = 'gateway' OR app_is_admin());
+
+-- Issued certificates — one row per pass. public_id is the URL-safe
+-- identifier shown on CVs; ledger_entry_id is the foreign key into the
+-- append-only signed ledger.
+CREATE TABLE certificates (
+  id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  public_id              text NOT NULL UNIQUE,    -- e.g. 'SABLE-FND-A7K3Q9'
+  user_id                uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  level                  text NOT NULL REFERENCES certification_levels(code) ON DELETE RESTRICT,
+  exam_attempt_id        uuid NOT NULL REFERENCES exam_attempts(id) ON DELETE RESTRICT,
+  score                  integer NOT NULL CHECK (score BETWEEN 0 AND 100),
+  hours_at_issue         double precision NOT NULL,
+  ledger_entry_id        uuid NOT NULL UNIQUE,
+  issued_at              timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX certificates_user_idx ON certificates (user_id);
+CREATE INDEX certificates_level_idx ON certificates (level);
+
+ALTER TABLE certificates ENABLE ROW LEVEL SECURITY;
+-- Selecting a certificate is also possible via the *public* verification
+-- service — that uses a service role bypassing RLS to query by
+-- public_id. Inside the authed tree, users see their own.
+CREATE POLICY certificates_select ON certificates FOR SELECT
+  USING (user_id = app_user_id() OR app_is_admin() OR app_actor() = 'gateway');
+CREATE POLICY certificates_write ON certificates FOR ALL
+  USING (app_actor() = 'gateway' OR app_is_admin())
+  WITH CHECK (app_actor() = 'gateway' OR app_is_admin());
+
+-- The cryptographic ledger. Append-only; every entry links to the prior
+-- via prev_hash and is signed with the platform Ed25519 key. tsa_token
+-- is the RFC 3161 TimeStampToken from a qualified TSA — column reserved;
+-- writer fills it once a TSA contract is signed.
+CREATE TABLE certification_ledger (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  entry_index         bigint NOT NULL UNIQUE,
+  prev_hash           bytea NOT NULL,                -- 32 bytes (sha256), zero-buffer for genesis
+  canonical_payload   jsonb NOT NULL,                -- JCS-canonical certification record
+  entry_hash          bytea NOT NULL,                -- sha256(prev_hash || canonical_payload bytes)
+  platform_key_id     text NOT NULL,                 -- which Ed25519 key version signed
+  platform_signature  bytea NOT NULL,                -- Ed25519 sig over entry_hash
+  tsa_token           bytea,                         -- RFC 3161 TimeStampToken, NULL until TSA wired
+  tsa_provider        text,                          -- 'freetsa', 'digicert', ...
+  tsa_anchored_at     timestamptz,                   -- when TSA returned the token
+  created_at          timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX certification_ledger_entry_hash_idx ON certification_ledger (entry_hash);
+CREATE INDEX certification_ledger_created_at_idx ON certification_ledger (created_at);
+
+ALTER TABLE certification_ledger ENABLE ROW LEVEL SECURITY;
+CREATE POLICY certification_ledger_select ON certification_ledger FOR SELECT USING (true);
+CREATE POLICY certification_ledger_insert ON certification_ledger FOR INSERT
+  WITH CHECK (app_actor() = 'gateway');
+-- No UPDATE, no DELETE policies → append-only enforced by RLS.
+
+-- Belt-and-braces append-only enforcement via trigger so even a
+-- privileged superuser can't quietly amend history.
+CREATE OR REPLACE FUNCTION ledger_reject_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'certification_ledger is append-only' USING ERRCODE = 'insufficient_privilege';
+END;
+$$;
+
+CREATE TRIGGER certification_ledger_no_update
+  BEFORE UPDATE ON certification_ledger
+  FOR EACH ROW EXECUTE FUNCTION ledger_reject_mutation();
+
+CREATE TRIGGER certification_ledger_no_delete
+  BEFORE DELETE ON certification_ledger
+  FOR EACH ROW EXECUTE FUNCTION ledger_reject_mutation();
+
+------------------------------------------------------------------------------
 -- 17. admin_audit_log  (PARTITIONED BY RANGE (created_at) — monthly, immutable)
 ------------------------------------------------------------------------------
 
