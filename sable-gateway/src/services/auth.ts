@@ -27,6 +27,7 @@ import * as prTokensDb from '../db/passwordResetTokens.js';
 import * as sessionsDb from '../db/sessions.js';
 import * as usersDb from '../db/users.js';
 import * as securityEventsDb from '../db/securityEvents.js';
+import * as email from './email.js';
 import * as security from './security.js';
 import * as sessions from './sessions.js';
 
@@ -102,6 +103,11 @@ export async function signup(sql: Sql, _redis: RedisClient, input: SignupInput):
     ipAddress: input.ipAddress,
     platform: input.platform,
   });
+
+  // Fire the verification email after the user + token are committed.
+  // Don't fail signup if Resend hiccups — email_logs records the
+  // 'failed' row, and the user can request a resend from /auth/me.
+  await email.sendVerification(sql, input.email, userId, verifyToken).catch(() => undefined);
 
   return {
     userId,
@@ -226,8 +232,8 @@ export async function changePassword(sql: Sql, _redis: RedisClient, input: Chang
 
 // ---------------------------------------------------------------------------
 
-export async function requestPasswordReset(sql: Sql, email: string, ipAddress: string): Promise<{ token: string | null }> {
-  const emailHash = emailLookup(email);
+export async function requestPasswordReset(sql: Sql, emailAddress: string, ipAddress: string): Promise<{ token: string | null }> {
+  const emailHash = emailLookup(emailAddress);
   const user = await usersDb.findByEmailLookup(sql, emailHash);
   if (user === null) {
     // Don't leak — always behave the same to the caller.
@@ -243,6 +249,7 @@ export async function requestPasswordReset(sql: Sql, email: string, ipAddress: s
   });
 
   await security.emitEvent(sql, 'password_reset_requested', { userId: user.id, ipAddress });
+  await email.sendPasswordReset(sql, emailAddress, user.id, rawToken).catch(() => undefined);
   return { token: rawToken };
 }
 

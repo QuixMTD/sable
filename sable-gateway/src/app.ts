@@ -36,6 +36,7 @@ import {
 
 import { buildRouter } from './routes/index.js';
 import type { ServiceRoute } from './db/serviceRoutes.js';
+import { botSignal } from './services/botDetection.js';
 
 export interface AppConfig {
   sql: Sql;
@@ -79,6 +80,11 @@ export function buildApp(config: AppConfig): Express {
   // Coarse global per-IP ceiling. Per-route limits (auth, public, proxy)
   // sit on top of this with tighter limits.
   app.use(rateLimitByIp({ redis: config.redis, limit: 2_400, window: 'minute' }));
+
+  // Bot-signal sampler. Fire-and-forget — records inter-request gaps
+  // and lack-of-mouse telemetry on every request; the authed routers
+  // append the userId via req.session before their handlers run.
+  app.use(botSignal({ sql: config.sql, redis: config.redis }));
 
   app.use(buildRouter(config));
 

@@ -166,3 +166,160 @@ export async function listBlocks(sql: Sql): Promise<BlockListing[]> {
     `,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Read-only listings.
+// ---------------------------------------------------------------------------
+
+export interface HmacKeyListing {
+  id: string;
+  version: number;
+  key_ref: string;
+  is_active: boolean;
+  activated_at: Date;
+  deprecated_at: Date | null;
+  expires_at: Date | null;
+}
+
+export async function listHmacKeys(sql: Sql): Promise<HmacKeyListing[]> {
+  return withRequestContext(sql, { actor: 'admin', isAdmin: true }, async (tx) =>
+    tx<HmacKeyListing[]>`
+      SELECT id, version, key_ref, is_active, activated_at, deprecated_at, expires_at
+      FROM gateway.hmac_key_versions
+      ORDER BY version DESC
+    `,
+  );
+}
+
+export interface AuditEntry {
+  id: string;
+  admin_user_id: string;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  before_state: Record<string, unknown> | null;
+  after_state: Record<string, unknown> | null;
+  ip_address: string | null;
+  created_at: Date;
+}
+
+export async function listAuditLog(sql: Sql, limit = 200): Promise<AuditEntry[]> {
+  return withRequestContext(sql, { actor: 'admin', isAdmin: true }, async (tx) =>
+    tx<AuditEntry[]>`
+      SELECT id, admin_user_id, action, target_type, target_id,
+             before_state, after_state, ip_address, created_at
+      FROM gateway.admin_audit_log
+      ORDER BY created_at DESC
+      LIMIT ${Math.min(limit, 1000)}
+    `,
+  );
+}
+
+export interface ServiceHealthListing {
+  service_name: string;
+  status: 'healthy' | 'degraded' | 'down';
+  response_time_ms: number | null;
+  error_message: string | null;
+  checked_at: Date;
+}
+
+export async function listServiceHealth(sql: Sql): Promise<ServiceHealthListing[]> {
+  return withRequestContext(sql, { actor: 'admin', isAdmin: true }, async (tx) =>
+    tx<ServiceHealthListing[]>`
+      SELECT DISTINCT ON (service_name)
+        service_name, status, response_time_ms, error_message, checked_at
+      FROM gateway.service_health_log
+      WHERE checked_at > now() - interval '1 hour'
+      ORDER BY service_name, checked_at DESC
+    `,
+  );
+}
+
+export interface ConfigEntry {
+  key: string;
+  value: string;
+  description: string | null;
+  updated_by: string | null;
+  updated_at: Date;
+}
+
+export async function listConfig(sql: Sql): Promise<ConfigEntry[]> {
+  return withRequestContext(sql, { actor: 'admin', isAdmin: true }, async (tx) =>
+    tx<ConfigEntry[]>`
+      SELECT key, value, description, updated_by, updated_at
+      FROM gateway.gateway_config
+      ORDER BY key
+    `,
+  );
+}
+
+export interface EnquiryListing {
+  id: string;
+  name: string;
+  firm_name: string | null;
+  enquiry_type: string;
+  message: string | null;
+  source: string | null;
+  status: string;
+  assigned_to: string | null;
+  internal_notes: string | null;
+  created_at: Date;
+}
+
+export async function listEnquiries(sql: Sql, status?: string): Promise<EnquiryListing[]> {
+  return withRequestContext(sql, { actor: 'admin', isAdmin: true }, async (tx) => {
+    if (status !== undefined) {
+      return tx<EnquiryListing[]>`
+        SELECT id, name, firm_name, enquiry_type, message, source, status,
+               assigned_to, internal_notes, created_at
+        FROM gateway.enquiries
+        WHERE status = ${status}
+        ORDER BY created_at DESC
+        LIMIT 500
+      `;
+    }
+    return tx<EnquiryListing[]>`
+      SELECT id, name, firm_name, enquiry_type, message, source, status,
+             assigned_to, internal_notes, created_at
+      FROM gateway.enquiries
+      ORDER BY created_at DESC
+      LIMIT 500
+    `;
+  });
+}
+
+export interface UpdateEnquiryInput {
+  adminId: string;
+  id: string;
+  status?: 'new' | 'contacted' | 'qualified' | 'demo_booked' | 'converted' | 'closed';
+  assignedTo?: string | null;
+  internalNotes?: string;
+  ipAddress: string | null;
+}
+
+export async function updateEnquiry(sql: Sql, input: UpdateEnquiryInput): Promise<void> {
+  await withRequestContext(sql, { actor: 'admin', userId: input.adminId, isAdmin: true }, async (tx) => {
+    if (input.status !== undefined) {
+      await tx`UPDATE gateway.enquiries SET status = ${input.status} WHERE id = ${input.id}`;
+    }
+    if (input.assignedTo !== undefined) {
+      await tx`UPDATE gateway.enquiries SET assigned_to = ${input.assignedTo} WHERE id = ${input.id}`;
+    }
+    if (input.internalNotes !== undefined) {
+      await tx`UPDATE gateway.enquiries SET internal_notes = ${input.internalNotes} WHERE id = ${input.id}`;
+    }
+  });
+  await audit.record(sql, {
+    adminId: input.adminId,
+    action: 'update_enquiry',
+    targetType: 'enquiry',
+    targetId: input.id,
+    before: null,
+    after: {
+      status: input.status ?? null,
+      assignedTo: input.assignedTo ?? null,
+      internalNotes: input.internalNotes ?? null,
+    },
+    ipAddress: input.ipAddress,
+  });
+}

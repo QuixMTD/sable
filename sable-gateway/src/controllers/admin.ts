@@ -19,7 +19,7 @@
 //   GET    /admin/enquiries               → listEnquiries
 //   PATCH  /admin/enquiries/:id           → updateEnquiry
 
-import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import type { Request, RequestHandler } from 'express';
 import { AppError, parse, success } from 'sable-shared';
 
 import type { AppConfig } from '../app.js';
@@ -150,11 +150,85 @@ export function setConfig(config: AppConfig): RequestHandler {
   };
 }
 
-const todo = (_req: Request, _res: Response, next: NextFunction): void =>
-  next(new AppError('INTERNAL_ERROR', { message: 'Not implemented' }));
-export const listHmacKeys = todo;
-export const listAuditLog = todo;
-export const listServiceHealth = todo;
-export const getConfig = todo;
-export const listEnquiries = todo;
-export const updateEnquiry = todo;
+export function listHmacKeys(config: AppConfig): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const rows = await adminSvc.listHmacKeys(config.sql);
+      res.status(200).json(success(rows, req.requestId));
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+export function listAuditLog(config: AppConfig): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const limit = Number.parseInt(typeof req.query.limit === 'string' ? req.query.limit : '200', 10);
+      const rows = await adminSvc.listAuditLog(config.sql, Number.isFinite(limit) ? limit : 200);
+      res.status(200).json(success(rows, req.requestId));
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+export function listServiceHealth(config: AppConfig): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const rows = await adminSvc.listServiceHealth(config.sql);
+      res.status(200).json(success(rows, req.requestId));
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+export function getConfig(config: AppConfig): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const rows = await adminSvc.listConfig(config.sql);
+      res.status(200).json(success(rows, req.requestId));
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+export function listEnquiries(config: AppConfig): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const rows = await adminSvc.listEnquiries(config.sql, status);
+      res.status(200).json(success(rows, req.requestId));
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+export function updateEnquiry(config: AppConfig): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      if (!req.session) return next(new AppError('AUTH_FAILED'));
+      const id = req.params.id ?? '';
+      const body = (req.body ?? {}) as {
+        status?: 'new' | 'contacted' | 'qualified' | 'demo_booked' | 'converted' | 'closed';
+        assignedTo?: string | null;
+        internalNotes?: string;
+      };
+      await adminSvc.updateEnquiry(config.sql, {
+        adminId: req.session.userId,
+        id,
+        status: body.status,
+        assignedTo: body.assignedTo,
+        internalNotes: body.internalNotes,
+        ipAddress: ip(req),
+      });
+      res.status(200).json(success(undefined, req.requestId));
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+

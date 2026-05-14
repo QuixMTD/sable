@@ -24,10 +24,10 @@ export function buildOrgsRouter(config: AppConfig): Router {
   r.get('/:id', ctrl.getOrg);
   r.patch('/:id', ctrl.updateOrg);
   r.get('/:id/members', ctrl.listMembers(config));
-  r.post('/:id/invites', ctrl.inviteMember);
-  r.get('/:id/invites', ctrl.listInvites);
-  r.delete('/:id/invites/:inviteId', ctrl.revokeInvite);
-  r.post('/invites/accept', ctrl.acceptInvite);
+  r.post('/:id/invites', ctrl.inviteMember(config));
+  r.get('/:id/invites', ctrl.listInvites(config));
+  r.delete('/:id/invites/:inviteId', ctrl.revokeInvite(config));
+  r.post('/invites/accept', ctrl.acceptInvite(config));
   r.delete('/:id/members/:userId', ctrl.removeMember(config));
   r.patch('/:id/members/:userId/role', ctrl.updateMemberRole(config));
 

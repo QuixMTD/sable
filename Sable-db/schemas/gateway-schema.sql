@@ -292,6 +292,43 @@ CREATE POLICY password_reset_tokens_gateway ON password_reset_tokens FOR ALL
   USING (app_actor() = 'gateway') WITH CHECK (app_actor() = 'gateway');
 
 ------------------------------------------------------------------------------
+-- 6b. org_invites — pending memberships. Owner/admin issues, the invitee
+--     accepts via a single-use hashed token emailed to them.
+------------------------------------------------------------------------------
+
+CREATE TABLE org_invites (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id                uuid NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+  invited_by_user_id    uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  email                 bytea NOT NULL,                                       -- 🔐
+  email_lookup          bytea NOT NULL,                                       -- #️⃣ digest(lower(btrim(email)), 'sha256')
+  role                  text NOT NULL
+                        CHECK (role IN ('admin', 'analyst', 'trader', 'viewer')),
+  token_hash            bytea NOT NULL UNIQUE,                                -- #️⃣
+  expires_at            timestamptz NOT NULL,
+  accepted_at           timestamptz,
+  accepted_by_user_id   uuid REFERENCES users(id) ON DELETE SET NULL,
+  revoked_at            timestamptz,
+  revoked_by_user_id    uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at            timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX org_invites_org_id_idx ON org_invites (org_id);
+CREATE INDEX org_invites_email_lookup_idx ON org_invites (email_lookup);
+CREATE INDEX org_invites_open_idx ON org_invites (expires_at)
+  WHERE accepted_at IS NULL AND revoked_at IS NULL;
+
+ALTER TABLE org_invites ENABLE ROW LEVEL SECURITY;
+-- Org owner/admins can manage their own org's invites; the gateway
+-- service can read/write any invite (it does the accept flow on behalf
+-- of a not-yet-org-member user). Admins can see everything.
+CREATE POLICY org_invites_select ON org_invites FOR SELECT
+  USING (org_id = app_org_id() OR app_is_admin() OR app_actor() = 'gateway');
+CREATE POLICY org_invites_write ON org_invites FOR ALL
+  USING ((org_id = app_org_id() AND app_is_owner_or_admin()) OR app_actor() = 'gateway')
+  WITH CHECK ((org_id = app_org_id() AND app_is_owner_or_admin()) OR app_actor() = 'gateway');
+
+------------------------------------------------------------------------------
 -- 7. sessions  (PARTITIONED BY RANGE (created_at) — monthly)
 ------------------------------------------------------------------------------
 

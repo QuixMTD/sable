@@ -26,19 +26,19 @@ export function buildAdminRouter(config: AppConfig): Router {
   r.use(auth, rls, adminOnly, limit);
 
   r.post('/hmac-keys/rotate', superOnly, ctrl.rotateHmacKey(config));
-  r.get('/hmac-keys', ctrl.listHmacKeys);
+  r.get('/hmac-keys', ctrl.listHmacKeys(config));
   r.get('/sessions', ctrl.listActiveSessions(config));
   r.delete('/sessions/:id', ctrl.forceRevokeSession(config));
   r.post('/blocks', ctrl.blockEntity(config));
   r.delete('/blocks/:id', ctrl.unblockEntity(config));
   r.get('/blocks', ctrl.listBlocks(config));
   r.get('/security-events', ctrl.listSecurityEvents(config));
-  r.get('/audit', ctrl.listAuditLog);
-  r.get('/health/services', ctrl.listServiceHealth);
-  r.get('/config', ctrl.getConfig);
+  r.get('/audit', ctrl.listAuditLog(config));
+  r.get('/health/services', ctrl.listServiceHealth(config));
+  r.get('/config', ctrl.getConfig(config));
   r.patch('/config', superOnly, ctrl.setConfig(config));
-  r.get('/enquiries', ctrl.listEnquiries);
-  r.patch('/enquiries/:id', ctrl.updateEnquiry);
+  r.get('/enquiries', ctrl.listEnquiries(config));
+  r.patch('/enquiries/:id', ctrl.updateEnquiry(config));
 
   return r;
 }

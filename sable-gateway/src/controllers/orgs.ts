@@ -18,7 +18,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { AppError, isOwnerOrAdmin, parse, success } from 'sable-shared';
 
 import type { AppConfig } from '../app.js';
-import { createOrgSchema } from '../schemas/orgs.js';
+import { acceptInviteSchema, createOrgSchema, inviteMemberSchema } from '../schemas/orgs.js';
 import * as orgsSvc from '../services/orgs.js';
 
 function requireOwnerOrAdmin(req: Request): void {
@@ -87,12 +87,85 @@ export function updateMemberRole(config: AppConfig): RequestHandler {
   };
 }
 
-// Pending the org_invites schema table.
+export function inviteMember(config: AppConfig): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      requireOwnerOrAdmin(req);
+      const orgId = req.params.id ?? '';
+      if (req.session!.orgId !== orgId) return next(new AppError('FORBIDDEN'));
+      const input = parse(inviteMemberSchema, req.body);
+      const result = await orgsSvc.invite(config.sql, {
+        orgId,
+        inviterUserId: req.session!.userId,
+        email: input.email,
+        role: input.role,
+      });
+      res.status(201).json(success({ inviteId: result.inviteId }, req.requestId));
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+export function listInvites(config: AppConfig): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      if (!req.session) return next(new AppError('AUTH_FAILED'));
+      const orgId = req.params.id ?? '';
+      if (req.session.orgId !== orgId) return next(new AppError('FORBIDDEN'));
+      const rows = await orgsSvc.listInvites(config.sql, orgId, req.session.userId);
+      res.status(200).json(
+        success(
+          rows.map((r) => ({
+            id: r.id,
+            role: r.role,
+            invitedByUserId: r.invited_by_user_id,
+            expiresAt: r.expires_at,
+            createdAt: r.created_at,
+          })),
+          req.requestId,
+        ),
+      );
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+export function revokeInvite(config: AppConfig): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      requireOwnerOrAdmin(req);
+      const orgId = req.params.id ?? '';
+      const inviteId = req.params.inviteId ?? '';
+      if (req.session!.orgId !== orgId) return next(new AppError('FORBIDDEN'));
+      await orgsSvc.revokeInvite(config.sql, inviteId, req.session!.userId, orgId);
+      res.status(200).json(success(undefined, req.requestId));
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+export function acceptInvite(config: AppConfig): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      if (!req.session) return next(new AppError('AUTH_FAILED'));
+      const input = parse(acceptInviteSchema, req.body);
+      const result = await orgsSvc.acceptInvite(config.sql, {
+        rawToken: input.token,
+        acceptingUserId: req.session.userId,
+      });
+      res.status(200).json(success(result, req.requestId));
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+// Org self-read / update aren't strictly invite-related; keep them
+// stubbed for now (small, mechanical additions when needed).
 const todo = (_req: Request, _res: Response, next: NextFunction): void =>
-  next(new AppError('INTERNAL_ERROR', { message: 'Not implemented — needs org_invites schema table' }));
+  next(new AppError('INTERNAL_ERROR', { message: 'Not implemented' }));
 export const getOrg = todo;
 export const updateOrg = todo;
-export const inviteMember = todo;
-export const listInvites = todo;
-export const revokeInvite = todo;
-export const acceptInvite = todo;
