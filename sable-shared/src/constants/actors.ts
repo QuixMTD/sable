@@ -8,6 +8,7 @@
 
 export const ACTOR_TYPES = [
   'user',      // authenticated end-user request
+  'api',       // first-party API-key authenticated request
   'gateway',   // gateway service-account writes (sessions, security_events, audit)
   'admin',     // admin console actions
   'webhook',   // Stripe / external webhook handlers

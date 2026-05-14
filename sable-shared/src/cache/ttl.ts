@@ -15,6 +15,8 @@ export const TTL = {
 
   /** Cached active_modules array — short window so module changes propagate quickly */
   MODULES_USER: 300,
+  /** API-key resolution cache — short so revokes propagate quickly. */
+  API_KEY: 300,
 
   /** HMAC replay-attack window — must match used_nonces.expires_at */
   NONCE: 30,
@@ -38,6 +40,10 @@ export const TTL = {
 
   /** Per-service health snapshot — must be shorter than the gap between probes */
   HEALTH: 30,
+  /** Per-key gateway_config read cache */
+  GATEWAY_CONFIG: 300,
+  /** Webhook idempotency — long enough to span Stripe's retry curve */
+  WEBHOOK_DEDUP: 86_400,
 } as const;
 
 export type TtlKey = keyof typeof TTL;

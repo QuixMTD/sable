@@ -42,6 +42,24 @@ export const cacheKeys = {
   /** Cached session state — TTL = remaining session lifetime. */
   session: (sessionId: string) => `session:${sessionId}`,
 
+  /**
+   * Hot-path cache: token-hash hex → full session JSON. Lets `authenticate`
+   * skip the DB lookup on every request. TTL = remaining session lifetime.
+   * Revoke writes invalidate both this and `session(id)` (the service holds
+   * the mapping so it can invalidate without the raw token).
+   */
+  sessionByToken: (tokenHashHex: string) => `session:bytok:${tokenHashHex}`,
+
+  /**
+   * API key resolution cache — hash(hex) → owner + scopes. Lets API-key auth
+   * skip the DB lookup on warm paths. TTL ≈ 5 min so revokes propagate.
+   */
+  apiKeyByHash: (keyHashHex: string) => `apikey:bytok:${keyHashHex}`,
+
+  /** Admin session — same pattern, separate cookie namespace. */
+  adminSession: (sessionId: string) => `admin-session:${sessionId}`,
+  adminSessionByToken: (tokenHashHex: string) => `admin-session:bytok:${tokenHashHex}`,
+
   /** Bot detection: request frequency counter (sub-50ms inter-request gaps). */
   botRequests50ms: (userId: string) => `bot:requests:${userId}:50ms`,
   /** Bot detection: regularity (auto-driven request patterns). */
@@ -55,10 +73,27 @@ export const cacheKeys = {
   hmacVersions: () => 'hmac:versions',
   /** Cached trusted device fingerprints for a user. */
   fingerprintUser: (userId: string) => `fingerprint:user:${userId}`,
-  /** Cached gateway_config key/value store. */
+  /** Single key/value cache for `gateway_config` reads. */
+  gatewayConfigKey: (key: string) => `config:gw:${key}`,
+  /** Cache-bust handle for the whole gateway_config map. */
   configCache: () => 'config:cache',
   /** Cached allowed CORS origins. */
   corsOrigins: () => 'cors:origins',
+
+  // ---------------------------------------------------------------------------
+  // Version-stamp keys — `Refreshable<T>` polls these; on diff, the gateway
+  // reloads the in-memory map from Postgres. Admin write paths bump the
+  // stamp with `Date.now().toString()` to trigger reload across instances.
+  // ---------------------------------------------------------------------------
+  serviceRoutesVersion: () => 'route:cache:version',
+  hmacVersionsVersion: () => 'hmac:versions:version',
+  corsOriginsVersion: () => 'cors:origins:version',
+
+  // ---------------------------------------------------------------------------
+  // Inbound webhook idempotency — set-once on the external event id so
+  // Stripe retries can't double-dispatch the same event.
+  // ---------------------------------------------------------------------------
+  webhookDedup: (source: string, externalEventId: string) => `webhook:dedup:${source}:${externalEventId}`,
 
   /** Latest health status snapshot per downstream service. */
   health: (serviceName: string) => `health:${serviceName}`,

@@ -24,7 +24,7 @@ def load_dotenv_if_present(dotenv_path: str | Path = ".env") -> None:
     vars directly and don't need this.
     """
     try:
-        from dotenv import load_dotenv  # type: ignore[import-untyped]
+        from dotenv import load_dotenv  # type: ignore[import-not-found]
     except ImportError:
         return
     load_dotenv(dotenv_path, override=False)

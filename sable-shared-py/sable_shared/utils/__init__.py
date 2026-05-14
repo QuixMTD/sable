@@ -5,12 +5,12 @@ from sable_shared.utils.context import (
     role_var,
     user_id_var,
 )
-from sable_shared.utils.format_error import AppError, format_error
 from sable_shared.utils.retry import with_retry
 
+# AppError and format_error moved to sable_shared.errors — import them
+# from there. utils now holds only request-context + retry helpers.
+
 __all__ = [
-    "AppError",
-    "format_error",
     "get_context",
     "org_id_var",
     "request_id_var",

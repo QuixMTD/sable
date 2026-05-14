@@ -29,8 +29,8 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from sable_shared.errors import AppError, format_error
 from sable_shared.utils.context import request_id_var
-from sable_shared.utils.format_error import AppError, format_error
 
 _log = logging.getLogger("sable_shared.error_handler")
 
