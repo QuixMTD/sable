@@ -27,6 +27,7 @@ from app.routers import (
     health,
     mean_variance,
     montecarlo,
+    portfolio,
     risk,
 )
 
@@ -38,6 +39,7 @@ app.include_router(health.router)
 app.include_router(montecarlo.router)
 app.include_router(black_litterman.router)
 app.include_router(mean_variance.router)
+app.include_router(portfolio.router)
 app.include_router(risk.router)
 
 install_error_handlers(app)
