@@ -23,6 +23,7 @@ from sable_shared.middleware import (
 
 from app.config import load_hmac_keys, service_auth_disabled
 from app.routers import (
+    attribution,
     black_litterman,
     factors,
     health,
@@ -45,6 +46,7 @@ app.include_router(portfolio.router)
 app.include_router(risk.router)
 app.include_router(risk_analytics.router)
 app.include_router(factors.router)
+app.include_router(attribution.router)
 
 install_error_handlers(app)
 
