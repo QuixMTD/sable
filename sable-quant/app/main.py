@@ -29,6 +29,7 @@ from app.routers import (
     montecarlo,
     portfolio,
     risk,
+    risk_analytics,
 )
 
 configure_logging("sable-quant")
@@ -41,6 +42,7 @@ app.include_router(black_litterman.router)
 app.include_router(mean_variance.router)
 app.include_router(portfolio.router)
 app.include_router(risk.router)
+app.include_router(risk_analytics.router)
 
 install_error_handlers(app)
 

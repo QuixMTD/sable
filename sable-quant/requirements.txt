@@ -13,6 +13,9 @@ numpy==2.2.0
 pandas==2.2.3
 scipy==1.14.1
 
-# Heavier engines (cvxpy general-convex optimisation, statsmodels factor
-# regression, numba-accelerated paths) land with the factor-analysis /
-# backtest slice — not pulled until they're actually used.
+# GARCH(1,1) conditional volatility (/risk/volatility). Pulls
+# statsmodels as a transitive dep — reused later for factor regression.
+arch==7.2.0
+
+# Heavier engines (cvxpy general-convex optimisation, numba-accelerated
+# paths) land with later slices — not pulled until they're actually used.
