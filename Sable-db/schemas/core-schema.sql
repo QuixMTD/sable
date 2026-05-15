@@ -114,7 +114,11 @@ CREATE POLICY workspace_layouts_write ON workspace_layouts FOR ALL
   WITH CHECK (org_id = app_org_id() AND app_is_owner_or_admin());
 
 ------------------------------------------------------------------------------
--- 4. workspace_pages  — personal pages, org pages, or client-dashboard pages
+-- 4. workspace_pages  — the workspace node tree. One table, two `kind`s:
+--      'page'      → Markdown-syntax rich text (body_markdown)
+--      'dashboard' → grid/canvas of drag-drop configurable widget blocks
+--    Either kind can parent either kind via parent_id (arbitrary nesting,
+--    Notion-style). Scope (personal / org / client) is orthogonal to kind.
 ------------------------------------------------------------------------------
 
 CREATE TABLE workspace_pages (
@@ -122,26 +126,36 @@ CREATE TABLE workspace_pages (
   user_id         uuid REFERENCES gateway.users(id) ON DELETE RESTRICT,
   org_id          uuid REFERENCES gateway.organisations(id) ON DELETE RESTRICT,
   client_id       uuid REFERENCES clients(id) ON DELETE SET NULL,
-  parent_page_id  uuid REFERENCES workspace_pages(id) ON DELETE CASCADE,   -- sub-page hierarchy (Notion-style)
+  parent_id       uuid REFERENCES workspace_pages(id) ON DELETE CASCADE,   -- any node under any node (Notion-style)
+  kind            text NOT NULL DEFAULT 'dashboard' CHECK (kind IN ('page', 'dashboard')),
   name            text NOT NULL,
   icon            text,
   position        integer NOT NULL DEFAULT 0,
+  -- Markdown body for kind='page'. NULL for dashboards (their content is
+  -- the workspace_widgets grid). The CHECK keeps the two kinds honest.
+  body_markdown   text,
+  -- Dashboard-only render config; ignored for pages.
   layout_mode     text NOT NULL DEFAULT 'grid' CHECK (layout_mode IN ('canvas', 'grid')),
   grid_columns    integer NOT NULL DEFAULT 12,
   created_at      timestamptz NOT NULL DEFAULT now(),
-  -- A page belongs to exactly one owner: a user (personal) or an org (shared).
-  -- XOR matches the shape of write_personal vs write_org policies — a hybrid
+  -- A node belongs to exactly one owner: a user (personal) or an org
+  -- (shared). XOR matches write_personal vs write_org policies — a hybrid
   -- row would pass the loose `OR` form but no policy could write to it.
-  CHECK ((user_id IS NOT NULL) <> (org_id IS NOT NULL))
+  CHECK ((user_id IS NOT NULL) <> (org_id IS NOT NULL)),
+  -- Only pages carry a Markdown body. Dashboard content lives in
+  -- workspace_widgets; the "a dashboard has no widgets / a page has no
+  -- widgets" invariant is cross-table and enforced in the core service.
+  CHECK (body_markdown IS NULL OR kind = 'page')
 );
 
 CREATE INDEX workspace_pages_user_id_idx ON workspace_pages (user_id);
 CREATE INDEX workspace_pages_org_id_idx ON workspace_pages (org_id);
 CREATE INDEX workspace_pages_client_id_idx ON workspace_pages (client_id);
-CREATE INDEX workspace_pages_parent_page_id_idx ON workspace_pages (parent_page_id);
+CREATE INDEX workspace_pages_parent_id_idx ON workspace_pages (parent_id);
+CREATE INDEX workspace_pages_kind_idx ON workspace_pages (kind);
 
 -- Notion-style permission inheritance: a page is visible to the current
--- session if it (or ANY of its ancestors via parent_page_id) is owned by the
+-- session if it (or ANY of its ancestors via parent_id) is owned by the
 -- session's user or org. SECURITY DEFINER bypasses RLS on the inner SELECT —
 -- otherwise the policy would recurse into itself. Search_path locked to
 -- core+public so the function can't be hijacked by a malicious caller's
@@ -158,15 +172,15 @@ SECURITY DEFINER
 SET search_path = core, public
 AS $$
   WITH RECURSIVE ancestors AS (
-    SELECT id, user_id, org_id, parent_page_id, 0 AS depth
+    SELECT id, user_id, org_id, parent_id, 0 AS depth
     FROM core.workspace_pages
     WHERE id = p_page_id
 
     UNION ALL
 
-    SELECT p.id, p.user_id, p.org_id, p.parent_page_id, a.depth + 1
+    SELECT p.id, p.user_id, p.org_id, p.parent_id, a.depth + 1
     FROM core.workspace_pages p
-    JOIN ancestors a ON a.parent_page_id = p.id
+    JOIN ancestors a ON a.parent_id = p.id
     WHERE a.depth < 50
   )
   SELECT EXISTS (
@@ -259,7 +273,10 @@ CREATE POLICY workspace_widgets_write ON workspace_widgets FOR ALL
   );
 
 ------------------------------------------------------------------------------
--- 6. workspace_notes
+-- 6. workspace_notes  — embeddable rich-text annotations (Quill Delta in
+--    `content`). NOT the page body: kind='page' nodes store their text in
+--    workspace_pages.body_markdown. Notes are the inline-annotation /
+--    research-note widget surface attachable to a dashboard or asset.
 ------------------------------------------------------------------------------
 
 CREATE TABLE workspace_notes (
@@ -336,7 +353,7 @@ CREATE POLICY note_access_write ON note_access FOR ALL
 -- A note is visible if any of:
 --   - the current user owns it
 --   - it lives on a page the current user can see (page-inheritance via
---     page_visible_to_current_session — walks parent_page_id, so a note on
+--     page_visible_to_current_session — walks parent_id, so a note on
 --     an org-shared page is visible to every org member)
 --   - the current user has an explicit note_access grant
 -- Writes still require direct ownership; org members can read inherited notes
