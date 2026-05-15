@@ -134,10 +134,17 @@ Status legend: `[ ]` open · `[~]` partially built (scaffold + some impl) · `[x
   Verified end-to-end (jail mechanics + FastAPI layer). Deferred: deploy-time
   hardening is documented in the Dockerfile but enforced on the Cloud Run /
   pod spec (read-only fs, deny-all egress, pid limit, drop caps).
-- [ ] **sable-quant** — Python FastAPI (Monte Carlo, Black-Litterman, mean-variance, factor analysis) — NEXT
+- [x] **sable-quant** — Python FastAPI pure-compute engine. All 6 S&C quant
+  aspects built + verified by mathematical property: portfolio construction
+  (min-var/risk-parity/max-div/factor-tilted), risk analytics (VaR
+  modes/Euler decomposition/vol/drawdown/tail/stress/liquidity), factor
+  models (FF3/FF5/Carhart/custom OLS), performance attribution
+  (BHB/Brinson-Fachler/active-share/tracking), backtesting (run/walk-forward/
+  metrics), Monte Carlo (GBM + Merton jump-diffusion, correlated multi-asset,
+  P(target)/P(ruin), CI bands). Stays asset-class-agnostic by design.
 - [ ] **sable-core** — workspace + CRM data model (schema altered to the page/dashboard node model; service not built)
 - [ ] **sable-engine** — pipeline orchestration, command parsing, crons, report generation, Pub/Sub, WS streaming
-- [ ] **sable-sc** — S&C module: EODHD integration, holdings CRUD, quant analytics dispatch
+- [ ] **sable-sc** — S&C module: EODHD integration, holdings CRUD, quant analytics dispatch, **technicals + screening/research** — NEXT
 - [ ] **sable-re** — Property: Land Registry + ONS + EPC + Planning Portal pulls, AVM, deal pipeline
 - [ ] **sable-crypto** — exchange API integrations (Binance, Coinbase, Kraken, Gemini, OKX), on-chain analytics
 - [ ] **sable-alt** — Vertex AI valuation, manual entry
