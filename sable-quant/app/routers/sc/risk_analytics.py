@@ -455,3 +455,146 @@ def liquidity_var(req: LiquidityVarRequest) -> dict[str, object]:
             liquidity_adjusted_var=req.base_var + liq_cost,
         ).model_dump()
     )
+
+
+# ---------------------------------------------------------------------------
+# Factor risk model — reconstruct portfolio risk from cached global pieces
+# ---------------------------------------------------------------------------
+#
+# σ_p² = wᵀ(B F Bᵀ + D)w, decomposed into factor space:
+#   e   = Bᵀw                      portfolio factor exposures (K)
+#   σ_f² = eᵀ F e                  systematic variance
+#   σ_s² = Σ wᵢ² Dᵢ                specific (idiosyncratic) variance
+# B (NxK betas) and D (specific var = residual_std²) are produced per
+# stock by /sc/factors/regress and cached globally; F is the small KxK
+# factor covariance (passed in, or estimated here from factor_returns).
+# So any portfolio's full risk + factor attribution is reconstructable
+# from cached components + weights — no per-portfolio refit. Euler in
+# factor space → per-factor σ contributions that, with the specific
+# contribution, sum to σ_p (a property the tests assert).
+
+class FactorModelRequest(BaseModel):
+    betas: list[list[float]] = Field(..., description="N×K asset factor betas, one row per asset")
+    weights: list[float] = Field(..., description="Portfolio weights, length N")
+    specific_var: list[float] = Field(
+        ..., description="Per-asset idiosyncratic variance (residual_std²), length N"
+    )
+    factor_cov: list[list[float]] | None = Field(
+        None, description="K×K per-period factor covariance"
+    )
+    factor_returns: list[list[float]] | None = Field(
+        None, description="K factor return series (K×T); F is estimated if factor_cov omitted"
+    )
+    factor_names: list[str] | None = Field(None, description="Length K; defaults to f0..fK-1")
+    periods_per_year: int = Field(252, ge=1, le=365)
+    confidence: float = Field(0.95, gt=0.5, lt=1.0)
+    horizon_days: int = Field(1, ge=1, le=10_000)
+
+
+class FactorRiskContribution(BaseModel):
+    name: str
+    exposure: float                 # portfolio beta to this factor, eₖ = Σ wᵢ βᵢₖ
+    variance_contribution: float    # Euler share of per-period factor variance
+    vol_contribution: float         # annualised σ contribution (Σ + specific = total_vol)
+    pct_of_total_risk: float        # share of total per-period variance
+
+
+class FactorModelResult(BaseModel):
+    total_vol: float                # annualised σ_p
+    factor_vol: float               # annualised systematic σ
+    specific_vol: float             # annualised idiosyncratic σ
+    pct_factor: float               # σ_f² / σ_p²
+    pct_specific: float             # σ_s² / σ_p²
+    factor_exposures: list[float]   # e = Bᵀw
+    factors: list[FactorRiskContribution]
+    specific_vol_contribution: float  # annualised σ contribution of specific risk
+    parametric_var: float           # zero-mean Gaussian, positive loss fraction, √h-scaled
+    confidence: float
+    horizon_days: int
+
+
+@router.post("/factor-model")
+def factor_model(req: FactorModelRequest) -> dict[str, object]:
+    B = np.asarray(req.betas, dtype=float)
+    w = np.asarray(req.weights, dtype=float)
+    D = np.asarray(req.specific_var, dtype=float)
+
+    if B.ndim != 2:
+        raise AppError("VALIDATION_FAILED", status_code=400, message="betas must be N×K")
+    n, k = B.shape
+    if w.size != n:
+        raise AppError("VALIDATION_FAILED", status_code=400, message="weights length must equal #assets (B rows)")
+    if D.size != n:
+        raise AppError("VALIDATION_FAILED", status_code=400, message="specific_var length must equal #assets")
+    if np.any(D < 0.0):
+        raise AppError("VALIDATION_FAILED", status_code=400, message="specific_var must be non-negative")
+
+    if req.factor_cov is not None:
+        F = np.asarray(req.factor_cov, dtype=float)
+    elif req.factor_returns is not None:
+        fr = np.asarray(req.factor_returns, dtype=float)
+        if fr.ndim != 2 or fr.shape[0] != k:
+            raise AppError(
+                "VALIDATION_FAILED",
+                status_code=400,
+                message="factor_returns must be K×T with K matching betas columns",
+            )
+        if fr.shape[1] < 2:
+            raise AppError("VALIDATION_FAILED", status_code=400, message="factor_returns needs ≥2 observations")
+        F = np.cov(fr, ddof=1)
+        F = np.atleast_2d(F)
+    else:
+        raise AppError(
+            "VALIDATION_FAILED",
+            status_code=400,
+            message="provide factor_cov or factor_returns",
+        )
+    if F.shape != (k, k):
+        raise AppError("VALIDATION_FAILED", status_code=400, message="factor covariance must be K×K matching betas")
+    if req.factor_names is not None and len(req.factor_names) != k:
+        raise AppError("VALIDATION_FAILED", status_code=400, message="factor_names length must equal #factors")
+
+    names = req.factor_names or [f"f{i}" for i in range(k)]
+    ann = np.sqrt(req.periods_per_year)
+
+    e = B.T @ w                                  # portfolio factor exposures (K)
+    Fe = F @ e
+    factor_var = float(e @ Fe)                   # eᵀFe (per period)
+    specific_var = float(np.sum(w ** 2 * D))     # wᵀ diag(D) w
+    total_var = factor_var + specific_var
+    if total_var <= 0.0:
+        raise AppError("VALIDATION_FAILED", status_code=400, message="degenerate portfolio (zero variance)")
+
+    sigma_p = float(np.sqrt(total_var))
+
+    # Euler in factor space: componentₖ = eₖ·(F e)ₖ, Σ = eᵀFe.
+    comp = e * Fe
+    contributions = [
+        FactorRiskContribution(
+            name=names[i],
+            exposure=float(e[i]),
+            variance_contribution=float(comp[i]),
+            vol_contribution=float(comp[i] / sigma_p * ann),
+            pct_of_total_risk=float(comp[i] / total_var),
+        )
+        for i in range(k)
+    ]
+
+    z = _z(req.confidence)
+    var = z * sigma_p * np.sqrt(req.horizon_days)   # zero-mean parametric (matches /decomposition)
+
+    return success(
+        FactorModelResult(
+            total_vol=float(sigma_p * ann),
+            factor_vol=float(np.sqrt(factor_var) * ann),
+            specific_vol=float(np.sqrt(specific_var) * ann),
+            pct_factor=float(factor_var / total_var),
+            pct_specific=float(specific_var / total_var),
+            factor_exposures=e.tolist(),
+            factors=[c.model_dump() for c in contributions],
+            specific_vol_contribution=float(specific_var / sigma_p * ann),
+            parametric_var=float(max(var, 0.0)),
+            confidence=req.confidence,
+            horizon_days=req.horizon_days,
+        ).model_dump()
+    )
