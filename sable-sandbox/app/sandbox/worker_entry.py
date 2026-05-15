@@ -143,14 +143,14 @@ def _run(job: dict[str, Any], result_path: str) -> None:
 
     from app.sandbox.allowlist import safe_builtins
 
-    inject = job.get("inject", {})
+    # Single injected blob. Everything the script needs lives under
+    # `data` (data['holdings'], data['prices'], data['properties'], …);
+    # sable-engine packed it from the right modules. `result` is the
+    # convention for the value the script hands back.
     namespace: dict[str, Any] = {
         "__builtins__": safe_builtins(),
         "__name__": "__sandbox__",
-        "data": inject.get("data"),
-        "ticker": inject.get("ticker"),
-        "portfolio": inject.get("portfolio"),
-        "fundamentals": inject.get("fundamentals"),
+        "data": job.get("data"),
         "result": None,
     }
 

@@ -22,6 +22,7 @@ from sable_shared.middleware import (
 )
 
 from app.config import load_hmac_keys, service_auth_disabled
+from app.routes.analyze import router as analyze_router
 from app.routes.execute import router as execute_router
 from app.routes.health import router as health_router
 
@@ -31,6 +32,7 @@ app = FastAPI(title="sable-sandbox", version="1.0.0")
 
 app.include_router(health_router)
 app.include_router(execute_router)
+app.include_router(analyze_router)
 
 install_error_handlers(app)
 

@@ -29,13 +29,6 @@ _MAX_STDOUT_KB = 256
 _MAX_CODE_CHARS = 100_000
 
 
-class InjectPayload(BaseModel):
-    data: Any = None
-    ticker: str | None = None
-    portfolio: Any = None
-    fundamentals: Any = None
-
-
 class Limits(BaseModel):
     timeout_s: int = Field(default=30, ge=1, le=_MAX_TIMEOUT_S)
     mem_mb: int = Field(default=512, ge=64, le=_MAX_MEM_MB)
@@ -44,7 +37,12 @@ class Limits(BaseModel):
 
 class ExecuteRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=_MAX_CODE_CHARS)
-    inject: InjectPayload = Field(default_factory=InjectPayload)
+    # The single injected blob. sable-engine fetches from the correct
+    # modules and packs everything under `data` (data['holdings'],
+    # data['prices'], data['properties'], data['unified_portfolio'], …).
+    # The sandbox stays source-agnostic — it never knows where any of
+    # this came from.
+    data: Any = None
     limits: Limits = Field(default_factory=Limits)
 
 
@@ -62,7 +60,7 @@ def execute(req: ExecuteRequest) -> dict[str, object]:
 
     envelope = run(
         code=req.code,
-        inject=req.inject.model_dump(),
+        data=req.data,
         limits=req.limits.model_dump(),
     )
     # 200 even for user-code errors / timeouts — the envelope carries the

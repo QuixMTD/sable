@@ -23,7 +23,7 @@ def healthz() -> dict[str, object]:
 def readyz() -> dict[str, object]:
     envelope = run(
         code="result = 1 + 1\n",
-        inject={},
+        data=None,
         limits={"timeout_s": 5, "mem_mb": 128, "stdout_kb": 4},
     )
     ready = envelope.get("result") == 2 and not envelope.get("killed")

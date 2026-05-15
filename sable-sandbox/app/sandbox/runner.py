@@ -24,7 +24,7 @@ from typing import Any
 _WALL_GRACE_S = 5
 
 
-def run(code: str, inject: dict[str, Any], limits: dict[str, Any]) -> dict[str, Any]:
+def run(code: str, data: Any, limits: dict[str, Any]) -> dict[str, Any]:
     timeout_s = int(limits.get("timeout_s", 30))
 
     tmpdir = tempfile.mkdtemp(prefix="sbx-")
@@ -32,7 +32,7 @@ def run(code: str, inject: dict[str, Any], limits: dict[str, Any]) -> dict[str, 
     result_path = os.path.join(tmpdir, "result.json")
 
     with open(job_path, "w", encoding="utf-8") as fh:
-        json.dump({"code": code, "inject": inject, "limits": limits}, fh)
+        json.dump({"code": code, "data": data, "limits": limits}, fh)
 
     # Minimal, scrubbed environment. Pin every known BLAS / OpenMP thread
     # pool to 1 so RLIMIT_NPROC can stay low without breaking numpy.
