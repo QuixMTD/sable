@@ -1,6 +1,15 @@
+"""Black-Litterman posterior. Implied equilibrium returns from
+market-cap weights + risk aversion, optionally blended with investor
+views (P, Q, optional Omega). Standardised onto the Sable envelope.
+"""
+
+from __future__ import annotations
+
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
+from sable_shared.errors import AppError
+from sable_shared.http import success
 
 router = APIRouter(prefix="/black-litterman", tags=["black-litterman"])
 
@@ -15,29 +24,46 @@ class BlackLittermanRequest(BaseModel):
     omega: list[list[float]] | None = None
 
 
-class BlackLittermanResponse(BaseModel):
+class BlackLittermanResult(BaseModel):
+    implied_equilibrium_returns: list[float]
     posterior_returns: list[float]
     posterior_cov: list[list[float]]
+    views_applied: bool
 
 
-@router.post("", response_model=BlackLittermanResponse)
-def run_black_litterman(req: BlackLittermanRequest) -> BlackLittermanResponse:
+@router.post("")
+def run_black_litterman(req: BlackLittermanRequest) -> dict[str, object]:
     cov = np.asarray(req.cov, dtype=float)
     w = np.asarray(req.market_weights, dtype=float)
 
-    if cov.shape[0] != cov.shape[1] or cov.shape[0] != w.size:
-        raise HTTPException(400, "cov must be NxN and match market_weights length")
+    if cov.ndim != 2 or cov.shape[0] != cov.shape[1] or cov.shape[0] != w.size:
+        raise AppError(
+            "VALIDATION_FAILED",
+            status_code=400,
+            message="cov must be NxN and match market_weights length",
+        )
 
     pi = req.risk_aversion * cov @ w  # implied equilibrium returns
 
     if req.P is None or req.Q is None:
-        return BlackLittermanResponse(
-            posterior_returns=pi.tolist(),
-            posterior_cov=cov.tolist(),
+        return success(
+            BlackLittermanResult(
+                implied_equilibrium_returns=pi.tolist(),
+                posterior_returns=pi.tolist(),
+                posterior_cov=cov.tolist(),
+                views_applied=False,
+            ).model_dump()
         )
 
     P = np.asarray(req.P, dtype=float)
     Q = np.asarray(req.Q, dtype=float)
+    if P.ndim != 2 or P.shape[1] != w.size or P.shape[0] != Q.size:
+        raise AppError(
+            "VALIDATION_FAILED",
+            status_code=400,
+            message="P must be KxN and Q length K (N = number of assets)",
+        )
+
     omega = (
         np.asarray(req.omega, dtype=float)
         if req.omega is not None
@@ -45,13 +71,24 @@ def run_black_litterman(req: BlackLittermanRequest) -> BlackLittermanResponse:
     )
 
     tau_cov = req.tau * cov
-    inv_tau_cov = np.linalg.inv(tau_cov)
-    inv_omega = np.linalg.inv(omega)
+    try:
+        inv_tau_cov = np.linalg.inv(tau_cov)
+        inv_omega = np.linalg.inv(omega)
+        posterior_cov = np.linalg.inv(inv_tau_cov + P.T @ inv_omega @ P)
+    except np.linalg.LinAlgError as e:
+        raise AppError(
+            "VALIDATION_FAILED",
+            status_code=400,
+            message="singular matrix — check cov / omega are positive definite",
+        ) from e
 
-    posterior_cov = np.linalg.inv(inv_tau_cov + P.T @ inv_omega @ P)
     posterior_returns = posterior_cov @ (inv_tau_cov @ pi + P.T @ inv_omega @ Q)
 
-    return BlackLittermanResponse(
-        posterior_returns=posterior_returns.tolist(),
-        posterior_cov=posterior_cov.tolist(),
+    return success(
+        BlackLittermanResult(
+            implied_equilibrium_returns=pi.tolist(),
+            posterior_returns=posterior_returns.tolist(),
+            posterior_cov=posterior_cov.tolist(),
+            views_applied=True,
+        ).model_dump()
     )

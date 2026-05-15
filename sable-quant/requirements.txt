@@ -1,6 +1,18 @@
+# sable-quant runtime deps.
+#
+# sable-shared (the Python lib) is installed separately from the copied
+# source tree in the Dockerfile; for local dev: pip install -e ../sable-shared-py
+# Build the image from the REPO ROOT:
+#   docker build -f sable-quant/Dockerfile -t sable-quant .
+
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 pydantic==2.10.3
+
 numpy==2.2.0
 pandas==2.2.3
 scipy==1.14.1
+
+# Heavier engines (cvxpy general-convex optimisation, statsmodels factor
+# regression, numba-accelerated paths) land with the factor-analysis /
+# backtest slice — not pulled until they're actually used.
