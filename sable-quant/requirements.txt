@@ -13,9 +13,11 @@ numpy==2.2.0
 pandas==2.2.3
 scipy==1.14.1
 
-# GARCH(1,1) conditional volatility (/risk/volatility). Pulls
-# statsmodels as a transitive dep — reused later for factor regression.
+# GARCH(1,1) conditional volatility (/risk/volatility).
 arch==7.2.0
+# Factor-model OLS (/factors/regress). Explicit (not just arch's
+# transitive pull) since we now depend on it directly.
+statsmodels==0.14.6
 
 # Heavier engines (cvxpy general-convex optimisation, numba-accelerated
 # paths) land with later slices — not pulled until they're actually used.
