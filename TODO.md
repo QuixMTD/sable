@@ -141,7 +141,11 @@ Status legend: `[ ]` open · `[~]` partially built (scaffold + some impl) · `[x
   models (FF3/FF5/Carhart/custom OLS), performance attribution
   (BHB/Brinson-Fachler/active-share/tracking), backtesting (run/walk-forward/
   metrics), Monte Carlo (GBM + Merton jump-diffusion, correlated multi-asset,
-  P(target)/P(ruin), CI bands). Stays asset-class-agnostic by design.
+  P(target)/P(ruin), CI bands), technical analysis (SMA/EMA/WMA, RSI, MACD,
+  Bollinger, Stochastic, ATR, ADX, OBV, Ichimoku, Fibonacci, support/
+  resistance — one /technicals workhorse). Stays asset-class-agnostic by
+  design; module services feed the OHLCV. Screening/research is NOT here
+  (no generic maths — pure EODHD feed joins) → lands with sable-sc.
 - [ ] **sable-core** — workspace + CRM data model (schema altered to the page/dashboard node model; service not built)
 - [ ] **sable-engine** — pipeline orchestration, command parsing, crons, report generation, Pub/Sub, WS streaming
 - [ ] **sable-sc** — S&C module: EODHD integration, holdings CRUD, quant analytics dispatch, **technicals + screening/research** — NEXT
