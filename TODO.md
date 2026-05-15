@@ -126,15 +126,21 @@ Status legend: `[ ]` open · `[~]` partially built (scaffold + some impl) · `[x
 - [x] cache helpers
 - [ ] **`config/database.py`** — postgres factory + `with_request_context` for whichever Python service needs DB access (none yet, but sable-quant may)
 
-## Downstream services (not started)
+## Downstream services
 
-- [ ] **sable-core** — workspace API, clients, portfolios, billing webhooks orchestration, unified-portfolio aggregator
+- [x] **sable-sandbox** — untrusted-code jail: AST allowlist gate, subprocess
+  runner with rlimits, wall-clock kill, result/figure capture, harness-failure
+  envelope, service-auth + request-id + structured logging on sable-shared-py.
+  Verified end-to-end (jail mechanics + FastAPI layer). Deferred: deploy-time
+  hardening is documented in the Dockerfile but enforced on the Cloud Run /
+  pod spec (read-only fs, deny-all egress, pid limit, drop caps).
+- [ ] **sable-quant** — Python FastAPI (Monte Carlo, Black-Litterman, mean-variance, factor analysis) — NEXT
+- [ ] **sable-core** — workspace + CRM data model (schema altered to the page/dashboard node model; service not built)
+- [ ] **sable-engine** — pipeline orchestration, command parsing, crons, report generation, Pub/Sub, WS streaming
 - [ ] **sable-sc** — S&C module: EODHD integration, holdings CRUD, quant analytics dispatch
 - [ ] **sable-re** — Property: Land Registry + ONS + EPC + Planning Portal pulls, AVM, deal pipeline
 - [ ] **sable-crypto** — exchange API integrations (Binance, Coinbase, Kraken, Gemini, OKX), on-chain analytics
 - [ ] **sable-alt** — Vertex AI valuation, manual entry
-- [ ] **sable-quant** — Python FastAPI service (Monte Carlo, Black-Litterman, mean-variance, factor analysis)
-- [ ] **sable-sandbox** — Python execution sandbox, AST validator, 30s timeout
 - [ ] **sable-frontend** — Flutter desktop + web
 
 ## Cross-service plumbing

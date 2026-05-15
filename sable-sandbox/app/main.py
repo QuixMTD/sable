@@ -1,77 +1,55 @@
-import json
-import os
-import subprocess
-import sys
-import tempfile
-from typing import Any
+"""sable-sandbox — untrusted Python execution jail.
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+Middleware order (outermost first):
+  RequestIdMiddleware  → correlation id on every request + response
+  ServiceAuthMiddleware → HMAC verify (sable-engine is the only caller);
+                          /healthz + /readyz exempt for Cloud Run probes
+  install_error_handlers → AppError / unhandled → standard JSON envelope
 
-from app.validator import ValidationError, validate
+The service holds no DB/Redis handles — readiness is a self-executed
+1+1 through the real runner. HMAC keys come from env only (no DB
+fallback by design — see app/config.py).
+"""
 
-EXEC_TIMEOUT_SECONDS = 30
+from __future__ import annotations
 
-app = FastAPI(title="sable-sandbox", version="0.1.0")
+from fastapi import FastAPI
+from sable_shared.middleware import (
+    RequestIdMiddleware,
+    ServiceAuthMiddleware,
+    configure_logging,
+    install_error_handlers,
+)
 
+from app.config import load_hmac_keys, service_auth_disabled
+from app.routes.execute import router as execute_router
+from app.routes.health import router as health_router
 
-class ExecuteRequest(BaseModel):
-    code: str = Field(..., min_length=1)
-    context: dict[str, Any] = Field(default_factory=dict)
+configure_logging("sable-sandbox")
 
+app = FastAPI(title="sable-sandbox", version="1.0.0")
 
-class ExecuteResponse(BaseModel):
-    stdout: str
-    stderr: str
-    returncode: int
-    timed_out: bool = False
+app.include_router(health_router)
+app.include_router(execute_router)
 
+install_error_handlers(app)
 
-@app.get("/healthz")
-def healthz() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.post("/execute", response_model=ExecuteResponse)
-def execute(req: ExecuteRequest) -> ExecuteResponse:
-    try:
-        validate(req.code)
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    ticker = req.context.get("ticker", "")
-    preamble = (
-        f"data = {json.dumps(req.context)}\n"
-        f"ticker = {json.dumps(ticker)}\n\n"
-    )
-    full_code = preamble + req.code
-
-    with tempfile.NamedTemporaryFile(
-        suffix=".py", mode="w", delete=False, dir="/tmp"
-    ) as f:
-        f.write(full_code)
-        path = f.name
-
-    try:
-        result = subprocess.run(
-            [sys.executable, path],
-            capture_output=True,
-            text=True,
-            timeout=EXEC_TIMEOUT_SECONDS,
-            cwd="/tmp",
+# Inbound is always sable-engine over signed HMAC. The local-dev escape
+# hatch drops it entirely — guarded so it can't silently ship.
+if not service_auth_disabled():
+    _hmac_keys = load_hmac_keys()
+    if not _hmac_keys:
+        raise RuntimeError(
+            "No HMAC_KEY_V<n> env vars found and SANDBOX_DISABLE_SERVICE_AUTH "
+            "is not set — refusing to start an unauthenticated sandbox."
         )
-    except subprocess.TimeoutExpired as e:
-        return ExecuteResponse(
-            stdout=e.stdout or "",
-            stderr=(e.stderr or "") + f"\nExecution exceeded {EXEC_TIMEOUT_SECONDS}s timeout",
-            returncode=-1,
-            timed_out=True,
-        )
-    finally:
-        os.unlink(path)
-
-    return ExecuteResponse(
-        stdout=result.stdout,
-        stderr=result.stderr,
-        returncode=result.returncode,
+    app.add_middleware(
+        ServiceAuthMiddleware,
+        hmac_keys=_hmac_keys,
+        exempt_paths=frozenset({"/healthz", "/readyz"}),
     )
+
+# RequestId is added last so it runs OUTERMOST (Starlette applies
+# middleware in reverse add order) — every response, including auth
+# rejections, carries the correlation id.
+app.add_middleware(RequestIdMiddleware)

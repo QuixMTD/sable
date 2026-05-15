@@ -1,11 +1,40 @@
+# sable-sandbox runtime deps.
+#
+# sable-shared (the Python lib) is NOT listed here — it's installed
+# separately from the copied source tree in the Dockerfile, and for
+# local dev via:  pip install -e ../sable-shared-py
+#
+# Build the image from the REPO ROOT so the Dockerfile can reach
+# sable-shared-py:
+#   docker build -f sable-sandbox/Dockerfile -t sable-sandbox .
+
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 pydantic==2.10.3
 
-# Libraries available to user code in the sandbox subprocess
+# Libraries available to user code inside the jail. Pinned hard — a
+# surprise minor bump in a sandboxed numeric lib is a security event,
+# not a routine upgrade.
+#
+# Scope rule: ad-hoc quant/analysis helpers live here; heavy native
+# pricing/optimisation engines (QuantLib, numba, TA-Lib) are
+# DELIBERATELY excluded — those belong in the trusted sable-quant
+# service, not in a jail that runs untrusted code.
+
+# --- scientific core ---
 numpy==2.2.0
 pandas==2.2.3
 scipy==1.14.1
 matplotlib==3.10.0
 statsmodels==0.14.4
 scikit-learn==1.6.0
+
+# --- quant-finance stack ---
+cvxpy==1.6.0            # convex optimisation (constrained portfolio opt)
+PyPortfolioOpt==1.5.6   # efficient frontier, Black-Litterman, HRP
+arch==7.2.0             # GARCH / volatility models
+empyrical==0.5.5        # Sharpe, Sortino, max drawdown, tail ratio
+
+# --- supporting ---
+sympy==1.13.3           # symbolic maths (closed-form derivations)
+seaborn==0.13.2         # statistical visualisation over matplotlib
