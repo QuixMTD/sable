@@ -22,12 +22,12 @@ from sable_shared.middleware import (
 )
 
 from app.config import load_hmac_keys, service_auth_disabled
-from app.routers import (
+from app.routers import health
+from app.routers.sc import (
     attribution,
     backtest,
     black_litterman,
     factors,
-    health,
     mean_variance,
     montecarlo,
     portfolio,
@@ -41,16 +41,25 @@ configure_logging("sable-quant")
 app = FastAPI(title="sable-quant", version="1.0.0")
 
 app.include_router(health.router)
-app.include_router(montecarlo.router)
-app.include_router(black_litterman.router)
-app.include_router(mean_variance.router)
-app.include_router(portfolio.router)
-app.include_router(risk.router)
-app.include_router(risk_analytics.router)
-app.include_router(factors.router)
-app.include_router(backtest.router)
-app.include_router(attribution.router)
-app.include_router(technicals.router)
+
+# Quant is namespaced per data module. Equities (sable-sc) mounts under
+# /sc; crypto (app.routers.crypto → /crypto) and property
+# (app.routers.re → /re) get the same treatment when those modules'
+# quant is built. The maths is reused across modules — only the module
+# that feeds it (and any asset-specific analytics) differs.
+for _r in (
+    montecarlo,
+    black_litterman,
+    mean_variance,
+    portfolio,
+    risk,
+    risk_analytics,
+    factors,
+    backtest,
+    attribution,
+    technicals,
+):
+    app.include_router(_r.router, prefix="/sc")
 
 install_error_handlers(app)
 
