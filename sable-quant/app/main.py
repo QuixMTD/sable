@@ -33,6 +33,7 @@ from app.routers import (
     portfolio,
     risk,
     risk_analytics,
+    technicals,
 )
 
 configure_logging("sable-quant")
@@ -49,6 +50,7 @@ app.include_router(risk_analytics.router)
 app.include_router(factors.router)
 app.include_router(backtest.router)
 app.include_router(attribution.router)
+app.include_router(technicals.router)
 
 install_error_handlers(app)
 
